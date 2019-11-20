@@ -1,2 +1,4 @@
 .idea
 venv
+*.gz
+__pycache__
