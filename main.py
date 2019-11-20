@@ -1,6 +1,7 @@
 import numpy as np
 import random
 from functools import reduce
+import mnist_loader
 
 
 def sigmoid(x):
@@ -44,6 +45,15 @@ class Network:
     def measure_cost(self, t_input, t_output):
         return 2 * np.mean(cost(self.forward_prop(t_input), t_output))
 
+    def classification_evaluate(self, test_data):
+        """Return the number of test inputs for which the neural
+        network outputs the correct result. Note that the neural
+        network's output is assumed to be the index of whichever
+        neuron in the final layer has the highest activation."""
+        test_results = [(np.argmax(self.forward_prop(x)), y)
+                        for (x, y) in test_data]
+        return sum(int(x == y) for (x, y) in test_results)
+
     def gradient_descent(self, training_data, mini_batch_size, n_epochs, learning_rate, test_data=None):
         for epoch in range(n_epochs):
             print(f"Epoch {epoch + 1} of {n_epochs} training")
@@ -66,6 +76,7 @@ class Network:
                 continue
 
             print(f"Cost: {np.mean([self.measure_cost(t_input, t_output) for t_input, t_output in test_data])}")
+            print(f"Class: {self.classification_evaluate(test_data)} / {len(test_data)}")
 
     def back_prop(self, input, output):
         nudge_biases = [None for _ in self.biases]
@@ -101,31 +112,10 @@ def rand():
     return random.gauss(0, 1)
 
 
-n_points = 100000
-data_x = [(rand(), rand()) for _ in range(n_points)]
-# data_y = [(sigmoid(a + b), sigmoid(a * b), sigmoid(a - b)) for a, b in data_x]
-data_y = [(0.25, -0.25, 0) for a, b in data_x]
-data = list(zip(data_x, data_y))
+training_data, validation_data, test_data = [list(x) for x in mnist_loader.load_data_wrapper()]
 
-training_ratio = 0.8
-n_training = int(n_points * training_ratio)
-data_training = data[:n_training]
-data_test = data[n_training:]
+net = Network(784, 30, 10)
+net.gradient_descent(training_data, 30, 10, 3.0, test_data)
 
-net = Network(2, 16, 12, 3)
-net.gradient_descent(data_training, n_training // 100, 5, 0.05, data_test)
+print(2 + 2)
 
-res = net.forward_prop((0, 0))
-print(res)
-
-res = net.forward_prop((-0.25, 0.5))
-print(res)
-
-res = net.forward_prop((0.5, -0.25))
-print(res)
-
-res = net.forward_prop((0.25, 0.5))
-print(res)
-
-res = net.forward_prop((0.5, -0.75))
-print(res)
