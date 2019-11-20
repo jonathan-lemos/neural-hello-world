@@ -1,36 +1,6 @@
 import numpy as np
-
-np.random.seed(42)
-
-n_inputs = 2
-n_outputs = 3
-
-n_points = 1000
-
-# create a vector with n_input rows and n_points columns
-sample_data_x = np.random.rand(n_inputs, n_points)
-
-# add rows 0 and 1
-sample_data_add = sample_data_x[0, :] + sample_data_x[1, :]
-# subtract row 0 - row 1
-sample_data_minus = sample_data_x[0, :] - sample_data_x[1, :]
-# subtract | row 0 - row 1 |
-sample_data_diff = np.abs(sample_data_x[0, :] - sample_data_x[1, :])
-
-# concatenate our 3 outputs
-# lists make these 3 rows of n_points columns and not just one array
-sample_data_y = np.concatenate(([sample_data_add], [sample_data_diff], [sample_data_minus]))
-
-# train on 80%. validate on 20%
-training_ratio = 0.8
-n_training_examples = int(n_points * training_ratio)
-
-# get the training ratio split on the data
-x_training = sample_data_x[:, :n_training_examples]
-x_validation = sample_data_x[:, n_training_examples:]
-
-y_training = sample_data_y[:, :n_training_examples]
-y_validation = sample_data_y[:, n_training_examples:]
+import random
+from functools import reduce
 
 
 def sigmoid(x):
@@ -38,49 +8,124 @@ def sigmoid(x):
 
 
 def sigmoid_inverse(x):
-    return np.log(1 / x - 1)
+    return -np.log(1 / x - 1)
 
 
 def d_sigmoid(x):
     return np.exp(-x) / (1 + np.exp(-x)) ** 2
 
 
-x_training_scaled = sigmoid(x_training)
-y_training_scaled = sigmoid(y_training)
+def cost(output, expected):
+    return 0.5 * (output - expected) ** 2
 
 
-class layer:
-    def __init__(self, input_dim, output_dim):
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-        self.weights = np.random.randn(output_dim, input_dim)
-        self.biases = np.random.randn(output_dim, 1)
-        self.activation = np.zeros((output_dim, 1))
-
-    def activate(self, prev_activation):
-        vec = prev_activation * self.weights
-        next_activation = np.sum(vec, axis=1).reshape(self.output_dim, 1)
-        self.activation = sigmoid(next_activation + self.biases)
+def d_cost(output, expected):
+    return output - expected
 
 
-neural_net = [layer(n_inputs, 16), layer(16, 12), layer(12, 8), layer(8, n_outputs)]
+def mini_batches(training_data, mini_batch_size):
+    new_data = random.sample(training_data, len(training_data))
+    i = 0
+    while i < len(new_data):
+        yield training_data[i:i + mini_batch_size]
+        i += mini_batch_size
 
 
-def forward_prop(input_vec):
-    neural_net[0].activation = input_vec
-    for i in range(1, len(neural_net)):
-        neural_net[i].activate(neural_net[i - 1].activation)
+class Network:
+    def __init__(self, *layer_sizes):
+        self.num_layers = len(layer_sizes)
+        self.sizes = layer_sizes
+        self.biases = [np.random.randn(y, 1) for y in layer_sizes[1:]]
+        self.weights = [np.random.randn(y, x) for x, y in zip(layer_sizes[:-1], layer_sizes[1:])]
+
+    def forward_prop(self, x):
+        return reduce(lambda a, c: sigmoid(np.dot(c[1], a) + c[0]), zip(self.biases, self.weights), np.array(x).reshape(len(x), 1))
+
+    def measure_cost(self, t_input, t_output):
+        return 2 * np.mean(cost(self.forward_prop(t_input), t_output))
+
+    def gradient_descent(self, training_data, mini_batch_size, n_epochs, learning_rate, test_data=None):
+        for epoch in range(n_epochs):
+            print(f"Epoch {epoch + 1} of {n_epochs} training")
+
+            for mini_batch in mini_batches(training_data, mini_batch_size):
+                total_biases_nudge = [np.zeros(bcol.shape) for bcol in self.biases]
+                total_weights_nudge = [np.zeros(wcol.shape) for wcol in self.weights]
+
+                for mb_input, mb_output in mini_batch:
+                    nudge_biases, nudge_weights = self.back_prop(mb_input, mb_output)
+                    total_biases_nudge = [n + t for n, t in zip(nudge_biases, total_biases_nudge)]
+                    total_weights_nudge = [n + t for n, t in zip(nudge_weights, total_weights_nudge)]
+
+                self.biases = [bcol - nbcol * learning_rate / len(mini_batch)
+                                for bcol, nbcol in zip(self.biases, total_biases_nudge)]
+                self.weights = [wcol - nwcol * learning_rate / len(mini_batch)
+                                for wcol, nwcol in zip(self.weights, total_weights_nudge)]
+
+            if test_data is None:
+                continue
+
+            print(f"Cost: {np.mean([self.measure_cost(t_input, t_output) for t_input, t_output in test_data])}")
+
+    def back_prop(self, input, output):
+        nudge_biases = [None for _ in self.biases]
+        nudge_weights = [None for _ in self.weights]
+
+        zs = []
+        activations = [np.array(input).reshape(len(input), 1)]
+        cur_activation = activations[0]
+
+        for b, w in zip(self.biases, self.weights):
+            z = np.dot(w, cur_activation) + b
+            a = sigmoid(z)
+            zs.append(z)
+            activations.append(a)
+            cur_activation = a
+
+        delta = d_cost(activations[-1], np.array(output).reshape(len(output), 1)) * d_sigmoid(zs[-1])
+        nudge_biases[-1] = delta
+        nudge_weights[-1] = np.dot(delta, activations[-2].transpose())
+
+        for i in range(2, self.num_layers):
+            delta = np.dot(self.weights[-i + 1].transpose(), delta) * d_sigmoid(zs[-i])
+            nudge_biases[-i] = delta
+            nudge_weights[-i] = np.dot(delta, activations[-i - 1].transpose())
+
+        return nudge_biases, nudge_weights
 
 
-def loss(predicted, actual):
-    individual_loss = 0.5 * (actual - predicted) ** 2
-    return np.mean(individual_loss)
+random.seed(0)
 
 
-def d_loss(predicted, actual):
-    return np.mean(actual - predicted)
+def rand():
+    return random.gauss(0, 1)
 
 
+n_points = 100000
+data_x = [(rand(), rand()) for _ in range(n_points)]
+# data_y = [(sigmoid(a + b), sigmoid(a * b), sigmoid(a - b)) for a, b in data_x]
+data_y = [(0.25, -0.25, 0) for a, b in data_x]
+data = list(zip(data_x, data_y))
 
-print(sample_data_y)
+training_ratio = 0.8
+n_training = int(n_points * training_ratio)
+data_training = data[:n_training]
+data_test = data[n_training:]
 
+net = Network(2, 16, 12, 3)
+net.gradient_descent(data_training, n_training // 100, 5, 0.05, data_test)
+
+res = net.forward_prop((0, 0))
+print(res)
+
+res = net.forward_prop((-0.25, 0.5))
+print(res)
+
+res = net.forward_prop((0.5, -0.25))
+print(res)
+
+res = net.forward_prop((0.25, 0.5))
+print(res)
+
+res = net.forward_prop((0.5, -0.75))
+print(res)
